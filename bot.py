@@ -11,8 +11,9 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
 
 # ============ НАСТРОЙКИ ============
-TOKEN = "8883855214:AAHo8elnlNlICxYNLV_xDx45d61mKe8ysOU"
-ADMIN_IDS = [644972263, 324171335]
+import os
+TOKEN = os.getenv("TOKEN")
+ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(",")]
 
 # ============ ДАННЫЕ ============
 players = {}
