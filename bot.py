@@ -9,16 +9,23 @@ from aiogram.types import (
 )
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
+from aiogram.client.session.aiohttp import AiohttpSession
+from aiogram.client.telegram import TelegramAPIServer
 
 # ============ НАСТРОЙКИ ============
 TOKEN = os.getenv("TOKEN")
 ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(",")]
 ADMIN_CONTACT = "@pa1_1_1a"
 
+# ВАШ ПРОКСИ ИЗ CLOUDFLARE
+PROXY_URL = "https://plain-lab-e69bape.skatertnikovaolesa.workers.dev"
+
 # ============ ДАННЫЕ ============
 players = {}
 
-bot = Bot(token=TOKEN)
+# Подключаем прокси для обхода блокировки
+session = AiohttpSession(api=TelegramAPIServer.from_base(PROXY_URL))
+bot = Bot(token=TOKEN, session=session)
 dp = Dispatcher()
 
 # ============ СОСТОЯНИЯ ============
@@ -26,6 +33,10 @@ class Reg(StatesGroup):
     car = State()
     plate = State()
     team = State()
+
+class Edit(StatesGroup):
+    choosing_field = State()
+    new_value = State()
 
 # ============ МЕНЮ ============
 def user_menu():
