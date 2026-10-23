@@ -32,7 +32,7 @@ def user_menu():
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="📝 Регистрация"), KeyboardButton(text="💸 Я оплатил")],
-            [KeyboardButton(text="ℹ️ Помощь")],
+            [KeyboardButton(text="✏️ Изменить данные")],
         ],
         resize_keyboard=True
     )
@@ -42,12 +42,12 @@ def admin_menu():
         keyboard=[
             [KeyboardButton(text="⚙️ Админ-панель")],
             [KeyboardButton(text="📝 Регистрация"), KeyboardButton(text="💸 Я оплатил")],
-            [KeyboardButton(text="ℹ️ Помощь")],
+            [KeyboardButton(text="✏️ Изменить данные")],
         ],
         resize_keyboard=True
     )
 
-MENU_BUTTONS = ["📝 Регистрация", "💸 Я оплатил", "ℹ️ Помощь", "⚙️ Админ-панель"]
+MENU_BUTTONS = ["📝 Регистрация", "💸 Я оплатил", "✏️ Изменить данные", "ℹ️ Помощь", "⚙️ Админ-панель"]
 
 # ============ РЕГИСТРАЦИЯ ============
 @dp.message(Command("reg"))
@@ -57,7 +57,7 @@ async def reg_start(message: Message, state: FSMContext):
         menu = admin_menu() if is_admin else user_menu()
         await message.answer("Ты уже зарегистрирован. Если ошибся — напиши /unreg", reply_markup=menu)
         return
-    await message.answer("🚗 Введи марку авто:")
+    await message.answer("🚗 Введи марку авто:", reply_markup=user_menu())
     await state.set_state(Reg.car)
 
 @dp.message(Reg.car)
@@ -102,7 +102,8 @@ async def reg_team(message: Message, state: FSMContext):
         f"🚗 {data['car']} | {data['plate']}\n"
         f"👥 {data['team']}\n\n"
         f"💰 Взнос: 500₽\n"
-        f"Оплата наличными или переводом организатору.\n"
+        f"Оплата только НАЛИЧНЫМИ 500₽.\n"
+        f"Если перевод — +2х в цене (1000₽).\n"
         f"После оплаты нажми /pay — админ отметит тебя.\n\n"
         f"⏳ Ждите подтверждения.\n"
         f"Если у вас возникли вопросы — свяжитесь с админом: {ADMIN_CONTACT}",
@@ -132,6 +133,58 @@ async def pay(message: Message):
         reply_markup=menu
     )
 
+# ============ ИЗМЕНЕНИЕ ДАННЫХ ============
+@dp.message(Command("edit"))
+async def edit_start(message: Message, state: FSMContext):
+    is_admin = message.from_user.id in ADMIN_IDS
+    menu = admin_menu() if is_admin else user_menu()
+    if message.from_user.id not in players:
+        await message.answer("Сначала зарегистрируйся: /reg", reply_markup=menu)
+        return
+    buttons = [
+        [InlineKeyboardButton(text="🚗 Марка авто", callback_data="edit_car")],
+        [InlineKeyboardButton(text="🔢 Номер", callback_data="edit_plate")],
+        [InlineKeyboardButton(text="👥 Название команды", callback_data="edit_team")],
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="edit_cancel")],
+    ]
+    await message.answer(
+        "✏️ Что хочешь изменить?",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
+    )
+    await state.set_state(Edit.choosing_field)
+
+@dp.callback_query(F.data.startswith("edit_"))
+async def edit_field(callback: CallbackQuery, state: FSMContext):
+    field = callback.data.split("_")[1]
+    if field == "cancel":
+        await state.clear()
+        await callback.message.edit_text("Изменение отменено.")
+        return
+    field_names = {"car": "марку авто", "plate": "номер", "team": "название команды"}
+    await state.update_data(field=field)
+    await callback.message.edit_text(f"Введи новое значение для поля «{field_names[field]}»:")
+    await state.set_state(Edit.new_value)
+
+@dp.message(Edit.new_value)
+async def edit_save(message: Message, state: FSMContext):
+    if message.text in MENU_BUTTONS:
+        await message.answer("Пожалуйста, введи новое значение текстом:")
+        return
+    data = await state.get_data()
+    field = data.get("field")
+    uid = message.from_user.id
+    is_admin = uid in ADMIN_IDS
+    menu = admin_menu() if is_admin else user_menu()
+    if uid in players:
+        players[uid][field] = message.text
+        field_names = {"car": "Марка авто", "plate": "Номер", "team": "Команда"}
+        await message.answer(
+            f"✅ {field_names[field]} обновлено!\n"
+            f"Новое значение: {message.text}",
+            reply_markup=menu
+        )
+    await state.clear()
+
 # ============ АДМИН-ПАНЕЛЬ ============
 @dp.message(Command("panel"))
 async def panel(message: Message):
@@ -139,11 +192,9 @@ async def panel(message: Message):
         await message.answer("Эта команда только для админа.", reply_markup=user_menu())
         return
     buttons = [
-        [InlineKeyboardButton(text="✅ Подтвердить игрока", callback_data="show_confirm")],
-        [InlineKeyboardButton(text="❌ Отменить подтверждение", callback_data="show_unconfirm")],
-        [InlineKeyboardButton(text="🗑 Удалить игрока", callback_data="show_delete")],
+        [InlineKeyboardButton(text="👥 Игроки", callback_data="show_players")],
         [InlineKeyboardButton(text="📋 Полный список", callback_data="show_list")],
-        [InlineKeyboardButton(text="🗑 Очистить список", callback_data="clear_list")],
+        [InlineKeyboardButton(text="🗑 Очистить всё", callback_data="clear_list")],
     ]
     await message.answer("⚙️ Админ-панель:", reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
 
@@ -160,22 +211,48 @@ async def cb_list(callback: CallbackQuery):
         text += f"👤 {p['username']}\n\n"
     await callback.message.edit_text(text, parse_mode="HTML")
 
-# ============ ПОДТВЕРЖДЕНИЕ ============
-@dp.callback_query(F.data == "show_confirm")
-async def cb_show_confirm(callback: CallbackQuery):
+# ============ ИГРОКИ ============
+@dp.callback_query(F.data == "show_players")
+async def cb_show_players(callback: CallbackQuery):
+    if not players:
+        await callback.message.edit_text("Список пуст.")
+        return
     buttons = []
     for uid, p in players.items():
-        if not p.get("confirmed"):
-            buttons.append([InlineKeyboardButton(
-                text=f"{p['team']} ({p['plate']})",
-                callback_data=f"confirm_{uid}"
-            )])
-    if not buttons:
-        await callback.message.edit_text("Все игроки уже подтверждены ✅")
-        return
+        status = "✅" if p.get("confirmed") else "❌"
+        buttons.append([InlineKeyboardButton(
+            text=f"{status} {p['team']} ({p['plate']})",
+            callback_data=f"player_card_{uid}"
+        )])
+    buttons.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="back_panel")])
     await callback.message.edit_text(
-        "Кто оплатил? Жми на игрока:",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
+        "👥 <b>Игроки</b>\nЖми на игрока для действий:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+        parse_mode="HTML"
+    )
+
+@dp.callback_query(F.data.startswith("player_card_"))
+async def cb_player_card(callback: CallbackQuery):
+    uid = int(callback.data.split("_")[2])
+    if uid not in players:
+        await callback.answer("Игрок не найден")
+        return
+    p = players[uid]
+    status = "✅ Подтверждён" if p.get("confirmed") else "❌ Не подтверждён"
+    buttons = []
+    if p.get("confirmed"):
+        buttons.append([InlineKeyboardButton(text="❌ Отменить подтверждение", callback_data=f"unconfirm_{uid}")])
+    else:
+        buttons.append([InlineKeyboardButton(text="✅ Подтвердить", callback_data=f"confirm_{uid}")])
+    buttons.append([InlineKeyboardButton(text="🗑 Удалить игрока", callback_data=f"delete_{uid}")])
+    buttons.append([InlineKeyboardButton(text="⬅️ Назад к списку", callback_data="show_players")])
+    await callback.message.edit_text(
+        f"<b>{p['team']}</b>\n"
+        f"🚗 {p['car']} | {p['plate']}\n"
+        f"👤 {p['username']}\n"
+        f"Статус: {status}",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+        parse_mode="HTML"
     )
 
 @dp.callback_query(F.data.startswith("confirm_"))
@@ -194,25 +271,7 @@ async def cb_confirm(callback: CallbackQuery):
             )
         except Exception:
             pass
-    await cb_show_confirm(callback)
-
-# ============ ОТМЕНА ПОДТВЕРЖДЕНИЯ ============
-@dp.callback_query(F.data == "show_unconfirm")
-async def cb_show_unconfirm(callback: CallbackQuery):
-    buttons = []
-    for uid, p in players.items():
-        if p.get("confirmed"):
-            buttons.append([InlineKeyboardButton(
-                text=f"{p['team']} ({p['plate']})",
-                callback_data=f"unconfirm_{uid}"
-            )])
-    if not buttons:
-        await callback.message.edit_text("Нет подтверждённых игроков.")
-        return
-    await callback.message.edit_text(
-        "Кого отменить? Жми на игрока:",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
-    )
+    await cb_player_card(callback)
 
 @dp.callback_query(F.data.startswith("unconfirm_"))
 async def cb_unconfirm(callback: CallbackQuery):
@@ -221,24 +280,7 @@ async def cb_unconfirm(callback: CallbackQuery):
         players[uid]["confirmed"] = False
         name = players[uid]["name"]
         await callback.answer(f"❌ {name} снят с подтверждения")
-    await cb_show_unconfirm(callback)
-
-# ============ УДАЛЕНИЕ ИГРОКА ============
-@dp.callback_query(F.data == "show_delete")
-async def cb_show_delete(callback: CallbackQuery):
-    buttons = []
-    for uid, p in players.items():
-        buttons.append([InlineKeyboardButton(
-            text=f"{p['team']} ({p['plate']})",
-            callback_data=f"delete_{uid}"
-        )])
-    if not buttons:
-        await callback.message.edit_text("Список пуст.")
-        return
-    await callback.message.edit_text(
-        "Кого удалить? Жми на игрока:",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
-    )
+    await cb_player_card(callback)
 
 @dp.callback_query(F.data.startswith("delete_"))
 async def cb_delete(callback: CallbackQuery):
@@ -247,7 +289,16 @@ async def cb_delete(callback: CallbackQuery):
         name = players[uid]["name"]
         del players[uid]
         await callback.answer(f"🗑 {name} удалён")
-    await cb_show_delete(callback)
+    await cb_show_players(callback)
+
+@dp.callback_query(F.data == "back_panel")
+async def cb_back_panel(callback: CallbackQuery):
+    buttons = [
+        [InlineKeyboardButton(text="👥 Игроки", callback_data="show_players")],
+        [InlineKeyboardButton(text="📋 Полный список", callback_data="show_list")],
+        [InlineKeyboardButton(text="🗑 Очистить всё", callback_data="clear_list")],
+    ]
+    await callback.message.edit_text("⚙️ Админ-панель:", reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
 
 # ============ ОЧИСТКА ============
 @dp.callback_query(F.data == "clear_list")
@@ -273,24 +324,19 @@ async def btn_reg(message: Message, state: FSMContext):
 async def btn_pay(message: Message):
     await pay(message)
 
+@dp.message(F.text == "✏️ Изменить данные")
+async def btn_edit(message: Message, state: FSMContext):
+    await edit_start(message, state)
+
 @dp.message(F.text == "⚙️ Админ-панель")
 async def btn_panel(message: Message):
     await panel(message)
 
-@dp.message(F.text == "ℹ️ Помощь")
-async def btn_help(message: Message):
-    await message.answer(
-        "📖 <b>Что умеет бот:</b>\n\n"
-        "📝 Регистрация — записаться на квест\n"
-        "💸 Я оплатил — сообщить об оплате\n"
-        "⚙️ Админ-панель — для организатора\n\n"
-        "<b>Команды вручную:</b>\n"
-        "/reg — зарегистрироваться\n"
-        "/unreg — отменить регистрацию\n"
-        "/pay — сообщить об оплате\n"
-        "/panel — админ-панель (только для админа)",
-        parse_mode="HTML"
-    )
+@dp.message(Command("menu"))
+async def cmd_menu(message: Message):
+    is_admin = message.from_user.id in ADMIN_IDS
+    menu = admin_menu() if is_admin else user_menu()
+    await message.answer("Меню:", reply_markup=menu)
 
 # ============ СТАРТ ============
 @dp.message(CommandStart())
